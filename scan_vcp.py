@@ -18,9 +18,15 @@ def get_us_common_stocks():
 
     return common_stocks
 
+import time
+
+def test_candle_access():
+    to_ts = int(time.time())
+    from_ts = to_ts - (180 * 24 * 60 * 60)  # 6 months back
+    url = f'https://finnhub.io/api/v1/stock/candle?symbol=AAPL&resolution=D&from={from_ts}&to={to_ts}&token={FINNHUB_API_KEY}'
+    response = requests.get(url)
+    print('Status code:', response.status_code)
+    print('Response:', response.text[:500])
+
 if __name__ == '__main__':
-    stocks = get_us_common_stocks()
-    print(f'Total common stocks found: {len(stocks)}')
-    print('First 10 examples:')
-    for s in stocks[:10]:
-        print(s['symbol'], '-', s['description'])
+    test_candle_access()
