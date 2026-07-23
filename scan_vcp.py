@@ -55,7 +55,7 @@ def fetch_bars_batch(symbols, start_date, end_date):
 
 def check_vcp(bars):
     if len(bars) < 160:
-        return False
+        return 'not_enough_data'
 
     df = pd.DataFrame(bars)
     df['t'] = pd.to_datetime(df['t'])
@@ -66,11 +66,11 @@ def check_vcp(bars):
 
     last = df.iloc[-1]
     if pd.isna(last['sma50']) or pd.isna(last['sma150']):
-        return False
+        return 'not_enough_data'
 
     in_uptrend = (last['c'] > last['sma50']) and (last['c'] > last['sma150']) and (last['sma50'] > last['sma150'])
     if not in_uptrend:
-        return False
+        return 'not_in_uptrend'
 
     recent = df.tail(60).reset_index(drop=True)
     swing_highs = []
@@ -95,7 +95,7 @@ def check_vcp(bars):
             pullbacks.append({'depth': depth_pct, 'volume': avg_volume})
 
     if len(pullbacks) < 2:
-        return False
+        return 'not_enough_pullbacks'
 
     depths = [p['depth'] for p in pullbacks[-3:]]
     contracting = all(depths[i] > depths[i + 1] for i in range(len(depths) - 1))
@@ -103,7 +103,12 @@ def check_vcp(bars):
     volumes = [p['volume'] for p in pullbacks[-3:]]
     volume_drying_up = all(volumes[i] > volumes[i + 1] for i in range(len(volumes) - 1))
 
-    return contracting and volume_drying_up
+    if not contracting:
+        return 'not_contracting'
+    if not volume_drying_up:
+        return 'volume_not_drying_up'
+
+    return 'match'
 
 
 def send_telegram_message(text):
@@ -124,16 +129,21 @@ def main():
     print(f'Scanning {len(stocks)} stocks...')
 
     matches = []
+    stage_counts = {}
     batch_size = 200
 
     for i in range(0, len(stocks), batch_size):
         batch = stocks[i:i + batch_size]
         bars_by_symbol = fetch_bars_batch(batch, start_date, end_date)
         for symbol, bars in bars_by_symbol.items():
-            if check_vcp(bars):
+            result = check_vcp(bars)
+            stage_counts[result] = stage_counts.get(result, 0) + 1
+            if result == 'match':
                 matches.append(symbol)
         print(f'Processed {min(i + batch_size, len(stocks))}/{len(stocks)}, matches so far: {len(matches)}')
         time.sleep(1)
+
+    print('Funnel breakdown:', stage_counts)
 
     if matches:
         message = f'VCP candidates found ({len(matches)}):\n' + '\n'.join(matches)
