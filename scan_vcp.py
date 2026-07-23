@@ -35,12 +35,14 @@ def fetch_bars_batch(symbols, start_date, end_date):
         'start': start_date,
         'end': end_date,
         'limit': 10000,
-        'adjustment': 'split'
+        'adjustment': 'split',
+        'feed': 'iex'
     }
     all_bars = {}
     while True:
         response = requests.get(url, headers=ALPACA_HEADERS, params=params)
         if response.status_code != 200:
+            print(f'Batch failed: status {response.status_code}, response: {response.text[:300]}')
             break
         data = response.json()
         bars = data.get('bars') or {}
@@ -51,7 +53,6 @@ def fetch_bars_batch(symbols, start_date, end_date):
             break
         params['page_token'] = token
     return all_bars
-
 
 def check_vcp(bars):
     if len(bars) < 160:
