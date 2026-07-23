@@ -1,3 +1,6 @@
+import os
+import requests
+
 def test_alpaca_access():
     ALPACA_KEY = os.environ['ALPACA_API_KEY']
     ALPACA_SECRET = os.environ['ALPACA_SECRET_KEY']
