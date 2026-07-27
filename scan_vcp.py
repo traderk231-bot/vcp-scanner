@@ -125,79 +125,78 @@ def check_cup_handle(bars):
     closes = window['c'].values
     n = len(closes)
 
-    peak_span = 10
-    candidates = []
-    for i in range(30, n - 40):
-        segment = closes[i - peak_span:i + peak_span + 1]
-        if closes[i] == segment.max():
-            candidates.append(i)
+    search_zone_end = n - 5
+    if search_zone_end < 60:
+        return 'not_enough_data'
 
-    if not candidates:
-        return 'no_left_rim_found'
+    left_idx = int(pd.Series(closes[:search_zone_end]).idxmax())
+    left_price = closes[left_idx]
 
-    for left_idx in reversed(candidates):
-        left_price = closes[left_idx]
+    if left_idx < 30:
+        return 'left_rim_too_early'
 
-        lead_in_start = max(0, left_idx - 60)
-        lead_in_end = max(lead_in_start + 1, left_idx - 15)
-        lead_in_price = closes[lead_in_start:lead_in_end].mean()
-        if lead_in_price <= 0:
-            continue
-        prior_gain_pct = (left_price - lead_in_price) / lead_in_price * 100
-        if prior_gain_pct < 20:
-            continue
+    lead_in_start = max(0, left_idx - 60)
+    lead_in_end = max(lead_in_start + 1, left_idx - 15)
+    lead_in_price = closes[lead_in_start:lead_in_end].mean()
+    if lead_in_price <= 0:
+        return 'invalid_lead_in'
+    prior_gain_pct = (left_price - lead_in_price) / lead_in_price * 100
+    if prior_gain_pct < 25:
+        return 'no_prior_uptrend'
 
-        search_zone = closes[left_idx:]
-        if len(search_zone) < 40:
-            continue
+    cup_search_end = min(n, left_idx + 260)
+    cup_zone = closes[left_idx:cup_search_end]
+    if len(cup_zone) < 35:
+        return 'not_enough_cup_data'
+    bottom_rel = int(pd.Series(cup_zone).idxmin())
+    bottom_idx = left_idx + bottom_rel
+    bottom_price = closes[bottom_idx]
 
-        cup_search_end = min(len(search_zone), 180)
-        cup_zone = search_zone[:cup_search_end]
-        bottom_rel = int(cup_zone.argmin())
-        bottom_idx = left_idx + bottom_rel
-        bottom_price = closes[bottom_idx]
+    cup_depth_pct = (left_price - bottom_price) / left_price * 100
+    if cup_depth_pct < 12 or cup_depth_pct > 40:
+        return 'cup_depth_out_of_range'
 
-        cup_depth_pct = (left_price - bottom_price) / left_price * 100
-        if cup_depth_pct < 12 or cup_depth_pct > 50:
-            continue
+    right_zone = closes[bottom_idx:cup_search_end]
+    if len(right_zone) < 10:
+        return 'not_enough_recovery_data'
+    right_rel = int(pd.Series(right_zone).idxmax())
+    right_idx = bottom_idx + right_rel
+    right_price = closes[right_idx]
 
-        right_search = closes[bottom_idx:left_idx + cup_search_end]
-        if len(right_search) < 10:
-            continue
-        right_rel = int(right_search.argmax())
-        right_idx = bottom_idx + right_rel
-        right_price = closes[right_idx]
+    recovery_pct = (right_price - left_price) / left_price * 100
+    if recovery_pct < -12:
+        return 'insufficient_recovery'
 
-        recovery_pct = (right_price - left_price) / left_price * 100
-        if recovery_pct < -15:
-            continue
+    cup_length = right_idx - left_idx
+    if cup_length < 35 or cup_length > 260:
+        return 'cup_length_out_of_range'
 
-        cup_length = right_idx - left_idx
-        if cup_length < 25 or cup_length > 260:
-            continue
+    days_since_right_rim = (n - 1) - right_idx
+    if days_since_right_rim > 40:
+        return 'right_rim_too_old'
 
-        handle_data = closes[right_idx:]
-        if len(handle_data) < 5 or len(handle_data) > 40:
-            continue
+    handle_data = closes[right_idx:]
+    if len(handle_data) < 5:
+        return 'no_handle_yet'
+    if len(handle_data) > 40:
+        return 'handle_too_long'
 
-        handle_low = handle_data.min()
-        handle_depth_pct = (right_price - handle_low) / right_price * 100
-        if handle_depth_pct > 15:
-            continue
-        if handle_depth_pct > cup_depth_pct * 0.6:
-            continue
+    handle_low = handle_data.min()
+    handle_depth_pct = (right_price - handle_low) / right_price * 100
+    if handle_depth_pct > 12:
+        return 'handle_too_deep'
+    if handle_depth_pct > cup_depth_pct * 0.5:
+        return 'handle_too_deep_relative'
 
-        cup_midpoint = (left_price + bottom_price) / 2
-        if handle_low < cup_midpoint:
-            continue
+    cup_midpoint = (left_price + bottom_price) / 2
+    if handle_low < cup_midpoint:
+        return 'handle_below_midpoint'
 
-        current_price = closes[-1]
-        if current_price < right_price * 0.90:
-            continue
+    current_price = closes[-1]
+    if current_price < right_price * 0.93:
+        return 'not_near_breakout'
 
-        return 'match'
-
-    return 'no_valid_cup_found'
+    return 'match'
 
 
 def send_telegram_message(text):
