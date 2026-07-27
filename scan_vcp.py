@@ -122,73 +122,82 @@ def check_cup_handle(bars):
     df = df.sort_values('t').reset_index(drop=True)
 
     window = df.tail(300).reset_index(drop=True)
-    n = len(window)
-    closes = window['c']
+    closes = window['c'].values
+    n = len(closes)
 
-    # Prior uptrend check: left rim should follow a real prior climb
-    lead_in_price = closes[:max(1, int(n * 0.05))].mean()
+    peak_span = 10
+    candidates = []
+    for i in range(30, n - 40):
+        segment = closes[i - peak_span:i + peak_span + 1]
+        if closes[i] == segment.max():
+            candidates.append(i)
 
-    # Left rim: highest point in the first 60% of the window
-    search_end = int(n * 0.6)
-    left_rim_idx = closes[:search_end].idxmax()
-    left_rim_price = closes[left_rim_idx]
+    if not candidates:
+        return 'no_left_rim_found'
 
-    prior_gain_pct = (left_rim_price - lead_in_price) / lead_in_price * 100
-    if prior_gain_pct < 25:
-        return 'no_prior_uptrend'
+    for left_idx in reversed(candidates):
+        left_price = closes[left_idx]
 
-    # Cup bottom: lowest point after left rim, leaving room for a handle at the end
-    handle_zone_start = int(n * 0.85)
-    cup_search = closes[left_rim_idx:handle_zone_start]
-    if len(cup_search) < 20:
-        return 'not_enough_cup_data'
-    cup_bottom_idx = cup_search.idxmin()
-    cup_bottom_price = closes[cup_bottom_idx]
+        lead_in_start = max(0, left_idx - 60)
+        lead_in_end = max(lead_in_start + 1, left_idx - 15)
+        lead_in_price = closes[lead_in_start:lead_in_end].mean()
+        if lead_in_price <= 0:
+            continue
+        prior_gain_pct = (left_price - lead_in_price) / lead_in_price * 100
+        if prior_gain_pct < 20:
+            continue
 
-    cup_depth_pct = (left_rim_price - cup_bottom_price) / left_rim_price * 100
-    if cup_depth_pct < 12 or cup_depth_pct > 50:
-        return 'cup_depth_out_of_range'
+        search_zone = closes[left_idx:]
+        if len(search_zone) < 40:
+            continue
 
-    # Right rim: highest point after the cup bottom, recovering toward the old high
-    right_search = closes[cup_bottom_idx:handle_zone_start]
-    if len(right_search) < 10:
-        return 'not_enough_recovery_data'
-    right_rim_idx = right_search.idxmax()
-    right_rim_price = closes[right_rim_idx]
+        cup_search_end = min(len(search_zone), 180)
+        cup_zone = search_zone[:cup_search_end]
+        bottom_rel = int(cup_zone.argmin())
+        bottom_idx = left_idx + bottom_rel
+        bottom_price = closes[bottom_idx]
 
-    recovery_pct = (right_rim_price - left_rim_price) / left_rim_price * 100
-    if recovery_pct < -15:
-        return 'insufficient_recovery'
+        cup_depth_pct = (left_price - bottom_price) / left_price * 100
+        if cup_depth_pct < 12 or cup_depth_pct > 50:
+            continue
 
-    cup_length = right_rim_idx - left_rim_idx
-    if cup_length < 25 or cup_length > 260:
-        return 'cup_length_out_of_range'
+        right_search = closes[bottom_idx:left_idx + cup_search_end]
+        if len(right_search) < 10:
+            continue
+        right_rel = int(right_search.argmax())
+        right_idx = bottom_idx + right_rel
+        right_price = closes[right_idx]
 
-    # Handle: whatever happens after the right rim
-    handle_data = closes[right_rim_idx:]
-    if len(handle_data) < 5:
-        return 'no_handle_yet'
+        recovery_pct = (right_price - left_price) / left_price * 100
+        if recovery_pct < -15:
+            continue
 
-    handle_low = handle_data.min()
-    handle_depth_pct = (right_rim_price - handle_low) / right_rim_price * 100
+        cup_length = right_idx - left_idx
+        if cup_length < 25 or cup_length > 260:
+            continue
 
-    if handle_depth_pct > 15:
-        return 'handle_too_deep'
-    if handle_depth_pct > cup_depth_pct / 2:
-        return 'handle_too_deep_relative'
+        handle_data = closes[right_idx:]
+        if len(handle_data) < 5 or len(handle_data) > 40:
+            continue
 
-    cup_midpoint = (left_rim_price + cup_bottom_price) / 2
-    if handle_low < cup_midpoint:
-        return 'handle_below_midpoint'
+        handle_low = handle_data.min()
+        handle_depth_pct = (right_price - handle_low) / right_price * 100
+        if handle_depth_pct > 15:
+            continue
+        if handle_depth_pct > cup_depth_pct * 0.6:
+            continue
 
-    if len(handle_data) > 40:
-        return 'handle_too_long'
+        cup_midpoint = (left_price + bottom_price) / 2
+        if handle_low < cup_midpoint:
+            continue
 
-    current_price = closes.iloc[-1]
-    if current_price < right_rim_price * 0.90:
-        return 'not_near_breakout'
+        current_price = closes[-1]
+        if current_price < right_price * 0.90:
+            continue
 
-    return 'match'
+        return 'match'
+
+    return 'no_valid_cup_found'
 
 
 def send_telegram_message(text):
