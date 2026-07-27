@@ -54,6 +54,7 @@ def fetch_bars_batch(symbols, start_date, end_date):
         params['page_token'] = token
     return all_bars
 
+
 def check_vcp(bars):
     if len(bars) < 160:
         return 'not_enough_data'
@@ -112,6 +113,84 @@ def check_vcp(bars):
     return 'match'
 
 
+def check_cup_handle(bars):
+    if len(bars) < 260:
+        return 'not_enough_data'
+
+    df = pd.DataFrame(bars)
+    df['t'] = pd.to_datetime(df['t'])
+    df = df.sort_values('t').reset_index(drop=True)
+
+    window = df.tail(300).reset_index(drop=True)
+    n = len(window)
+    closes = window['c']
+
+    # Prior uptrend check: left rim should follow a real prior climb
+    lead_in_price = closes[:max(1, int(n * 0.05))].mean()
+
+    # Left rim: highest point in the first 60% of the window
+    search_end = int(n * 0.6)
+    left_rim_idx = closes[:search_end].idxmax()
+    left_rim_price = closes[left_rim_idx]
+
+    prior_gain_pct = (left_rim_price - lead_in_price) / lead_in_price * 100
+    if prior_gain_pct < 25:
+        return 'no_prior_uptrend'
+
+    # Cup bottom: lowest point after left rim, leaving room for a handle at the end
+    handle_zone_start = int(n * 0.85)
+    cup_search = closes[left_rim_idx:handle_zone_start]
+    if len(cup_search) < 20:
+        return 'not_enough_cup_data'
+    cup_bottom_idx = cup_search.idxmin()
+    cup_bottom_price = closes[cup_bottom_idx]
+
+    cup_depth_pct = (left_rim_price - cup_bottom_price) / left_rim_price * 100
+    if cup_depth_pct < 12 or cup_depth_pct > 50:
+        return 'cup_depth_out_of_range'
+
+    # Right rim: highest point after the cup bottom, recovering toward the old high
+    right_search = closes[cup_bottom_idx:handle_zone_start]
+    if len(right_search) < 10:
+        return 'not_enough_recovery_data'
+    right_rim_idx = right_search.idxmax()
+    right_rim_price = closes[right_rim_idx]
+
+    recovery_pct = (right_rim_price - left_rim_price) / left_rim_price * 100
+    if recovery_pct < -15:
+        return 'insufficient_recovery'
+
+    cup_length = right_rim_idx - left_rim_idx
+    if cup_length < 25 or cup_length > 260:
+        return 'cup_length_out_of_range'
+
+    # Handle: whatever happens after the right rim
+    handle_data = closes[right_rim_idx:]
+    if len(handle_data) < 5:
+        return 'no_handle_yet'
+
+    handle_low = handle_data.min()
+    handle_depth_pct = (right_rim_price - handle_low) / right_rim_price * 100
+
+    if handle_depth_pct > 15:
+        return 'handle_too_deep'
+    if handle_depth_pct > cup_depth_pct / 2:
+        return 'handle_too_deep_relative'
+
+    cup_midpoint = (left_rim_price + cup_bottom_price) / 2
+    if handle_low < cup_midpoint:
+        return 'handle_below_midpoint'
+
+    if len(handle_data) > 40:
+        return 'handle_too_long'
+
+    current_price = closes.iloc[-1]
+    if current_price < right_rim_price * 0.90:
+        return 'not_near_breakout'
+
+    return 'match'
+
+
 def send_telegram_message(text):
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
     for i in range(0, len(text), 4000):
@@ -124,32 +203,42 @@ def main():
         return
 
     end_date = today.isoformat()
-    start_date = (today - datetime.timedelta(days=300)).isoformat()
+    start_date = (today - datetime.timedelta(days=500)).isoformat()
 
     stocks = get_us_common_stocks()
     print(f'Scanning {len(stocks)} stocks...')
 
-    matches = []
-    stage_counts = {}
+    vcp_matches = []
+    cup_matches = []
+    vcp_stage_counts = {}
+    cup_stage_counts = {}
     batch_size = 200
 
     for i in range(0, len(stocks), batch_size):
         batch = stocks[i:i + batch_size]
         bars_by_symbol = fetch_bars_batch(batch, start_date, end_date)
         for symbol, bars in bars_by_symbol.items():
-            result = check_vcp(bars)
-            stage_counts[result] = stage_counts.get(result, 0) + 1
-            if result == 'match':
-                matches.append(symbol)
-        print(f'Processed {min(i + batch_size, len(stocks))}/{len(stocks)}, matches so far: {len(matches)}')
+            vcp_result = check_vcp(bars)
+            vcp_stage_counts[vcp_result] = vcp_stage_counts.get(vcp_result, 0) + 1
+            if vcp_result == 'match':
+                vcp_matches.append(symbol)
+
+            cup_result = check_cup_handle(bars)
+            cup_stage_counts[cup_result] = cup_stage_counts.get(cup_result, 0) + 1
+            if cup_result == 'match':
+                cup_matches.append(symbol)
+
+        print(f'Processed {min(i + batch_size, len(stocks))}/{len(stocks)}, VCP: {len(vcp_matches)}, Cup&Handle: {len(cup_matches)}')
         time.sleep(1)
 
-    print('Funnel breakdown:', stage_counts)
+    print('VCP funnel:', vcp_stage_counts)
+    print('Cup & Handle funnel:', cup_stage_counts)
 
-    if matches:
-        message = f'VCP candidates found ({len(matches)}):\n' + '\n'.join(matches)
-    else:
-        message = 'No VCP candidates found today.'
+    message = 'Pattern Scan Results - ' + today.isoformat() + '\n\n'
+    message += 'VCP candidates (' + str(len(vcp_matches)) + '):\n'
+    message += ('\n'.join(vcp_matches) if vcp_matches else 'None found today') + '\n\n'
+    message += 'Cup & Handle candidates (' + str(len(cup_matches)) + '):\n'
+    message += ('\n'.join(cup_matches) if cup_matches else 'None found today')
 
     send_telegram_message(message)
 
