@@ -3,7 +3,7 @@ name: VCP Scanner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 22 * * 1-5'
+    - cron: '0 18 * * 1-5'
 
 jobs:
   scan:
